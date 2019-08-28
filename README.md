@@ -1,9 +1,25 @@
 music
 =====
 
-An OTP application
+网易云音乐歌单下载工具Erlang端，需配合Chrome插件
 
-Build
+http://git.dotatong.cn/dotatong/music-chrome
+
+
+编译
 -----
 
-    $ rebar3 compile
+```
+$ rebar3 as prod tar
+```
+
+启动
+-----
+
+```
+./bin/music start
+```
+
+
+
+
