@@ -17,7 +17,15 @@ start(_StartType, _StartArgs) ->
 		true ->
 			Port = EnvPort
 	end,
-	music_sup:start_link([Port]).
+
+	case application:get_env(path) of
+		{ok, EnvPath} ->
+			DownPath = EnvPath;
+		undefined ->
+			{ok, NowPath} = file:get_cwd(),
+			DownPath = [NowPath, "/download"]
+	end,
+	music_sup:start_link([Port, DownPath]).
 
 stop(_State) ->
 	ok.

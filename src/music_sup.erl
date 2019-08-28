@@ -11,8 +11,8 @@
 
 -export([init/1]).
 
-start_link([Port]) ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, [Port]).
+start_link([Port, DownPath]) ->
+	supervisor:start_link({local, ?MODULE}, ?MODULE, [Port, DownPath]).
 
 
 %%	{ok,
@@ -34,14 +34,14 @@ start_link([Port]) ->
 %% 			]
 %%		}
 %%	}
-init([Port]) ->
+init([Port, DownPath]) ->
 	{ok,
 		{
 			{one_for_one, 3, 10},
 			[
 				{
 					music_tcp,
-					{music_tcp, start_link, [Port]},
+					{music_tcp, start_link, [Port, DownPath]},
 					permanent,
 					10000,
 					supervisor,
