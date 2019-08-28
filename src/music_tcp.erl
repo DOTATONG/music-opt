@@ -205,7 +205,9 @@ exec_download(List) ->
 		fun(Item) ->
 			[Id | Str] = Item,
 			Name = [N || N <- string:replace(Str, " ", ""), N /= []],
-			case filelib:is_file(["./download/", Name]) of
+			FileBin = list_to_binary(["./download/", Name, ".mp3"]),
+			File = unicode:characters_to_list(FileBin),
+			case filelib:is_file(File) of
 				false ->
 					CmdBin = list_to_binary(["wget -q -O ./download/", Name, ".mp3 http://music.163.com/song/media/outer/url?id=", Id, ".mp3"]),
 					os:cmd(unicode:characters_to_list(CmdBin));
