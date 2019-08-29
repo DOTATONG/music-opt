@@ -204,7 +204,13 @@ exec_download(List, DownPath) ->
 	lists:foreach(
 		fun(Item) ->
 			[Id | Str] = Item,
-			Name = [N || N <- string:replace(Str, " ", ""), N /= []],
+
+			%%过滤空格
+%%			Str1 = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Str, " ", "")),
+%%			Name = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Str1, "/", "")),
+
+			%%过滤空格[32]、"/"[47]、"\"[92]
+			Name = [N || N <- Str, N /= 32, N /= 47, N /= 92],
 			FileBin = list_to_binary([DownPath, "/", Name, ".mp3"]),
 			File = unicode:characters_to_list(FileBin),
 			case filelib:is_file(File) of
