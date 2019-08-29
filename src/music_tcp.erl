@@ -203,20 +203,24 @@ exec_download(List, DownPath) ->
 	end,
 	lists:foreach(
 		fun(Item) ->
-			[Id | Str] = Item,
+			[Id | [Txt | _End]] = Item,
 
-			%%过滤空格
-%%			Str1 = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Str, " ", "")),
-%%			Name = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Str1, "/", "")),
+			%%list过滤空格
+%%			Txt1 = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Txt, " ", "")),
+%%			Name = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Txt1, "/", "")),
 
 			%%过滤空格[32]、"/"[47]、"\"[92]
-			Name = [N || N <- Str, N /= 32, N /= 47, N /= 92],
-			FileBin = list_to_binary([DownPath, "/", Name, ".mp3"]),
-			File = unicode:characters_to_list(FileBin),
+%%			Name = [N || N <- unicode:characters_to_list(Txt), N /= 32, N /= 47, N /= 92],
+
+			%%替换"/"[47]、"\"[92]为 "_"[95] "&"[38]
+			Txt1 = binary:replace(Txt, <<47>>, <<95>>, [global]),
+			Txt2 = binary:replace(Txt1, <<92>>, <<95>>, [global]),
+			Name = unicode:characters_to_list(Txt2),
+
+			File = DownPath ++ "/" ++ Name ++ ".mp3",
 			case filelib:is_file(File) of
 				false ->
-					CmdBin = list_to_binary(["wget -q -O \"", DownPath, "/", Name, ".mp3\" http://music.163.com/song/media/outer/url?id=", Id, ".mp3"]),
-					os:cmd(unicode:characters_to_list(CmdBin));
+					os:cmd("wget -q -O \"" ++ File ++ "\" http://music.163.com/song/media/outer/url?id=" ++ binary_to_list(Id) ++ ".mp3");
 				_ ->
 					nothing_to_do
 			end
