@@ -5,7 +5,7 @@
 %%%-------------------------------------------------------------------
 -module(rfc6455).
 
--export([reply/1, parse_data/1, pack_data/1, pack_data/2]).
+-export([reply/1, parse_data/3, pack_data/1, pack_data/2]).
 
 %%打包返回数据
 pack_data(Payload) ->
@@ -73,29 +73,58 @@ payload_length_to_binary(N) ->
 %%  +-------------------------------------------------------------+
 
 %%解析客户端数据
-parse_data(Data) when is_list(Data) ->
-	parse_data(list_to_binary(Data));
-parse_data(<<8:4, 0:4, _/bits>>) ->
+parse_data(Data, _, _) when is_list(Data) ->
+	parse_data(list_to_binary(Data), 0, 0);
+parse_data(<<8:4, 0:4, _/bits>>, _, _) ->
 	continue;
-parse_data(<<8:4, 8:4, _/bits>>) ->
+parse_data(<<8:4, 8:4, _/bits>>, _, _) ->
 	close;
-parse_data(<<8:4, Opcode:4, 1:1, Len:7, MaskKey:32, Rest/bits>>) when Len < 126, Opcode < 3, Opcode > 0 ->
-	parse_rest(Opcode, Len, MaskKey, Rest);
-parse_data(<<8:4, Opcode:4, 1:1, 126:7, Len:16, MaskKey:32, Rest/bits>>) when Opcode < 3, Opcode > 0 ->
-	parse_rest(Opcode, Len, MaskKey, Rest);
-parse_data(<<8:4, Opcode:4, 1:1, 127:7, Len:64, MaskKey:32, Rest/bits>>) when Opcode < 3, Opcode > 0 ->
-	parse_rest(Opcode, Len, MaskKey, Rest);
-parse_data(_) ->
+parse_data(<<8:4, Opcode:4, 1:1, Len:7, MaskKey:32, Rest/bits>>, _, _) when Len < 126, Opcode < 3, Opcode > 0 ->
+	return_rest(Opcode, parse_rest(Len, MaskKey, Rest, 0));
+parse_data(<<8:4, Opcode:4, 1:1, 126:7, Len:16, MaskKey:32, Rest/bits>>, _, _) when Opcode < 3, Opcode > 0 ->
+	return_rest(Opcode, parse_rest(Len, MaskKey, Rest, 0));
+parse_data(<<8:4, Opcode:4, 1:1, 127:7, Len:64, MaskKey:32, Rest/bits>>, _, _) when Opcode < 3, Opcode > 0 ->
+	return_rest(Opcode, parse_rest(Len, MaskKey, Rest, 0));
+parse_data(Data, MaskKey, UnmaskedLen) when UnmaskedLen > 0 ->
+	parse_rest(byte_size(Data), MaskKey, Data, UnmaskedLen);
+parse_data(_, _, _) ->
 	error.
 
-parse_rest(Opcode, Len, MaskKey, Rest) ->
-	<<End:Len/binary, _/bits>> = Rest,
-	Data = unmask(End, MaskKey, <<>>),
-	case Opcode of
-		1 ->
-			{text, binary_to_list(Data)};
-		2 ->
-			{binary, Data}
+parse_rest(Len, MaskKey, Rest, UnmaskedLen) ->
+	{Data, _, Eof} = split_rest(Rest, Len),
+%%	<<Data:Len/binary, _/bits>> = Rest,
+%%	Payload = unmask(Data, MaskKey, UnmaskedLen),
+	Payload = unmask(Data, MaskKey, 0),
+	PayloadLen = byte_size(Payload),
+	case Eof of
+		true ->
+			{binary, Payload};
+		false ->
+			{more, MaskKey, Payload, PayloadLen + UnmaskedLen}
+	end.
+
+split_rest(Rest, Len) ->
+	case byte_size(Rest) of
+		Len ->
+			{Rest, <<>>, true};
+		RestLen when RestLen < Len ->
+			{Rest, <<>>, false};
+		_ ->
+			<<Data:Len/binary, Rest2/bits>> = Rest,
+			{Data, Rest2, true}
+	end.
+
+return_rest(Opcode, Data) ->
+	case Data of
+		{more, _, _, _} ->
+			Data;
+		{binary, Payload} ->
+			case Opcode of
+				1 ->
+					{text, binary_to_list(Payload)};
+				2 ->
+					{binary, Payload}
+			end
 	end.
 
 %%应答tcp握手
@@ -117,20 +146,50 @@ reply(Bin) ->
 	].
 
 %%由于Browser发过来的数据都是mask的,所以需要unmask
-unmask(<<>>, _, Unmasked) ->
+%%unmask(<<>>, _, Unmasked) ->
+%%	Unmasked;
+%%unmask(<<O:32, Rest/bits>>, MaskKey, Acc) ->
+%%	T = O bxor MaskKey,
+%%	unmask(Rest, MaskKey, <<Acc/binary, T:32>>);
+%%unmask(<<O:24>>, MaskKey, Acc) ->
+%%	<<MaskKey2:24, _:8>> = <<MaskKey:32>>,
+%%	T = O bxor MaskKey2,
+%%	<<Acc/binary, T:24>>;
+%%unmask(<<O:16>>, MaskKey, Acc) ->
+%%	<<MaskKey2:16, _:16>> = <<MaskKey:32>>,
+%%	T = O bxor MaskKey2,
+%%	<<Acc/binary, T:16>>;
+%%unmask(<<O:8>>, MaskKey, Acc) ->
+%%	<<MaskKey2:8, _:24>> = <<MaskKey:32>>,
+%%	T = O bxor MaskKey2,
+%%	<<Acc/binary, T:8>>.
+
+
+unmask(Data, undefined, _) ->
+	Data;
+unmask(Data, MaskKey, 0) ->
+	mask(Data, MaskKey, <<>>);
+%% We unmask on the fly so we need to continue from the right mask byte.
+unmask(Data, MaskKey, UnmaskedLen) ->
+	Left = UnmaskedLen rem 4,
+	Right = 4 - Left,
+	MaskKey2 = (MaskKey bsl (Left * 8)) + (MaskKey bsr (Right * 8)),
+	mask(Data, MaskKey2, <<>>).
+
+mask(<<>>, _, Unmasked) ->
 	Unmasked;
-unmask(<<O:32, Rest/bits>>, MaskKey, Acc) ->
+mask(<<O:32, Rest/bits>>, MaskKey, Acc) ->
 	T = O bxor MaskKey,
-	unmask(Rest, MaskKey, <<Acc/binary, T:32>>);
-unmask(<<O:24>>, MaskKey, Acc) ->
+	mask(Rest, MaskKey, <<Acc/binary, T:32>>);
+mask(<<O:24>>, MaskKey, Acc) ->
 	<<MaskKey2:24, _:8>> = <<MaskKey:32>>,
 	T = O bxor MaskKey2,
 	<<Acc/binary, T:24>>;
-unmask(<<O:16>>, MaskKey, Acc) ->
+mask(<<O:16>>, MaskKey, Acc) ->
 	<<MaskKey2:16, _:16>> = <<MaskKey:32>>,
 	T = O bxor MaskKey2,
 	<<Acc/binary, T:16>>;
-unmask(<<O:8>>, MaskKey, Acc) ->
+mask(<<O:8>>, MaskKey, Acc) ->
 	<<MaskKey2:8, _:24>> = <<MaskKey:32>>,
 	T = O bxor MaskKey2,
 	<<Acc/binary, T:8>>.

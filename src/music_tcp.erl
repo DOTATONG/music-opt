@@ -156,7 +156,7 @@ receive_callback(Socket, Cid, DownPath) ->
 				_ ->
 %%					io:format("~p收到WebSocket连接~n", [self()]),
 					gen_tcp:send(Socket, rfc6455:reply(Bin)),
-					websocket_callback(Socket, Cid, DownPath)
+					websocket_callback(Socket, Cid, DownPath, 0, <<>>, 0)
 			end;
 		_ ->
 			exit(Cid, <<"不支持的消息类型">>),
@@ -164,22 +164,37 @@ receive_callback(Socket, Cid, DownPath) ->
 	end.
 
 
-websocket_callback(Socket, Cid, DownPath) ->
+websocket_callback(Socket, Cid, DownPath, MaskKey, Unmasked, UnmaskedLen) ->
 	case gen_tcp:recv(Socket, 0) of
 		{ok, Bin} ->
-			case rfc6455:parse_data(Bin) of
+			case rfc6455:parse_data(Bin, MaskKey, UnmaskedLen) of
 				{text, Data} ->
 					{ok, List, _} = rfc4627:decode(Data),
 					if
 						is_list(List) ->
 							exec_download(List, DownPath),
 							gen_tcp:send(Socket, rfc6455:pack_data(<<"ok">>)),
-							websocket_callback(Socket, Cid, DownPath);
+							websocket_callback(Socket, Cid, DownPath, 0, <<>>, 0);
 						true ->
 							gen_tcp:send(Socket, rfc6455:pack_data(<<"格式错误">>)),
 							exit(Cid, <<"消息格式错误">>),
 							gen_tcp:close(Socket)
 					end;
+				{binary, DataBin} ->
+					Payload = <<Unmasked/binary, DataBin/binary>>,
+					{ok, List, _} = rfc4627:decode(Payload),
+					if
+						is_list(List) ->
+							exec_download(List, DownPath),
+							gen_tcp:send(Socket, rfc6455:pack_data(<<"ok">>)),
+							websocket_callback(Socket, Cid, DownPath, 0, <<>>, 0);
+						true ->
+							gen_tcp:send(Socket, rfc6455:pack_data(<<"格式错误">>)),
+							exit(Cid, <<"消息格式错误">>),
+							gen_tcp:close(Socket)
+					end;
+				{more, Key, Payload, PayloadLen} ->
+					websocket_callback(Socket, Cid, DownPath, Key, Payload, PayloadLen);
 				close ->
 %%					io:format("~p收到WebSocket关闭连接消息~n", [self()]),
 					exit(Cid, <<"客户端关闭连接">>),
@@ -209,12 +224,14 @@ exec_download(List, DownPath) ->
 %%			Txt1 = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Txt, " ", "")),
 %%			Name = lists:foldl(fun(L, List) -> List ++ L end, [], string:replace(Txt1, "/", "")),
 
-			%%过滤空格[32]、"/"[47]、"\"[92]
+			%%过滤空格[32]、nbsp空格[160]、"/"[47]、"\"[92]
 %%			Name = [N || N <- unicode:characters_to_list(Txt), N /= 32, N /= 47, N /= 92],
 
-			%%替换"/"[47]、"\"[92]为 "_"[95] "&"[38]
+			%%替换"/"[47]、"\"[92] 为 "_"[95]或"&"[38]
 			Txt1 = binary:replace(Txt, <<47>>, <<95>>, [global]),
 			Txt2 = binary:replace(Txt1, <<92>>, <<95>>, [global]),
+			%%替换160为32会导致unicode:characters_to_list失败
+%%			Txt3 = binary:replace(Txt2, <<160>>, <<32>>, [global]),
 			Name = unicode:characters_to_list(Txt2),
 
 			File = DownPath ++ "/" ++ Name ++ ".mp3",
