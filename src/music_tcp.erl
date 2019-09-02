@@ -172,7 +172,7 @@ websocket_callback(Socket, Cid, DownPath, MaskKey, Unmasked, UnmaskedLen) ->
 					{ok, List, _} = rfc4627:decode(Data),
 					if
 						is_list(List) ->
-							exec_download(List, DownPath),
+							pre_download(List, DownPath),
 							gen_tcp:send(Socket, rfc6455:pack_data(<<"ok">>)),
 							websocket_callback(Socket, Cid, DownPath, 0, <<>>, 0);
 						true ->
@@ -185,7 +185,7 @@ websocket_callback(Socket, Cid, DownPath, MaskKey, Unmasked, UnmaskedLen) ->
 					{ok, List, _} = rfc4627:decode(Payload),
 					if
 						is_list(List) ->
-							exec_download(List, DownPath),
+							pre_download(List, DownPath),
 							gen_tcp:send(Socket, rfc6455:pack_data(<<"ok">>)),
 							websocket_callback(Socket, Cid, DownPath, 0, <<>>, 0);
 						true ->
@@ -209,7 +209,42 @@ websocket_callback(Socket, Cid, DownPath, MaskKey, Unmasked, UnmaskedLen) ->
 			gen_tcp:close(Socket)
 	end.
 
-exec_download(List, DownPath) ->
+pre_download(List, DownPath) ->
+	Tuple = list_to_tuple(List),
+	AllNum = tuple_size(Tuple),
+	PerNum = trunc(AllNum / 3),
+
+	Cid = self(),
+	if
+		PerNum < 3 ->
+			spawn(fun() -> exec_download(Cid, List, DownPath) end),
+			wait_finish(1, 0);
+		true ->
+			{List1, ListEnd} = lists:split(PerNum, List),
+			if
+				AllNum rem 3 =:= 2 ->
+					{List2, List3} = lists:split(PerNum + 1, ListEnd);
+				true ->
+					{List2, List3} = lists:split(PerNum, ListEnd)
+			end,
+			spawn(fun() -> exec_download(Cid, List1, DownPath) end),
+			spawn(fun() -> exec_download(Cid, List2, DownPath) end),
+			spawn(fun() -> exec_download(Cid, List3, DownPath) end),
+			wait_finish(3, 0)
+	end.
+
+wait_finish(TaskNum, DoneNum) ->
+	receive
+		_ ->
+			case DoneNum + 1 of
+				TaskNum ->
+					ok;
+				_ ->
+					wait_finish(TaskNum, DoneNum + 1)
+			end
+	end.
+
+exec_download(Cid, List, DownPath) ->
 	case filelib:is_dir(DownPath) of
 		false ->
 			file:make_dir(DownPath);
@@ -242,4 +277,4 @@ exec_download(List, DownPath) ->
 					nothing_to_do
 			end
 		end, List),
-	ok.
+	Cid ! ok.
